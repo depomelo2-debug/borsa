@@ -1,10 +1,9 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { createClient } from '@supabase/supabase-js';
+import Link from 'next/link'; // Link özelliği eklendi
 
-// Supabase Bağlantısı (Okuma yetkisi yeterli)
-// Not: Normalde env dosyasına koyarız ama şimdilik hızlı test için buraya yazalım.
-// .env dosyasındaki URL ve KEY'ini tırnakların içine yapıştır:
+// Supabase Bağlantısı (Senin verdiğin bilgiler girildi)
 const supabase = createClient(
   'https://oxtihxyfluoliaupeshe.supabase.co',
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im94dGloeHlmbHVvbGlhdXBlc2hlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg1NjEwMjYsImV4cCI6MjA4NDEzNzAyNn0.Ax7KUFiVynSU_Pvdg5KAKZo6s5dzKWf0LjAudHYz7yQ'
@@ -40,16 +39,19 @@ export default function Home() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {veriler.map((veri) => (
-            <div key={veri.symbol} className="bg-gray-800 p-6 rounded-xl border border-gray-700 hover:border-blue-500 transition">
-              <div className="flex justify-between items-center mb-2">
-                <h2 className="text-xl font-bold text-blue-400">{veri.symbol}</h2>
-                <span className="text-xs bg-gray-700 px-2 py-1 rounded uppercase text-gray-300">{veri.category}</span>
+            // Buraya Link eklendi: Tıklayınca /detay/THYAO gibi sayfaya gider
+            <Link key={veri.symbol} href={`/detay/${veri.symbol}`}>
+              <div className="bg-gray-800 p-6 rounded-xl border border-gray-700 hover:border-blue-500 transition cursor-pointer h-full">
+                <div className="flex justify-between items-center mb-2">
+                  <h2 className="text-xl font-bold text-blue-400">{veri.symbol}</h2>
+                  <span className="text-xs bg-gray-700 px-2 py-1 rounded uppercase text-gray-300">{veri.category}</span>
+                </div>
+                <p className="text-4xl font-mono font-bold">{veri.price} <span className="text-lg text-gray-400">TL</span></p>
+                <p className="text-xs text-gray-500 mt-4 text-right">
+                  Son Güncelleme: {new Date(veri.last_updated).toLocaleTimeString()}
+                </p>
               </div>
-              <p className="text-4xl font-mono font-bold">{veri.price} <span className="text-lg text-gray-400">TL</span></p>
-              <p className="text-xs text-gray-500 mt-4 text-right">
-                Son Güncelleme: {new Date(veri.last_updated).toLocaleTimeString()}
-              </p>
-            </div>
+            </Link>
           ))}
         </div>
       )}
