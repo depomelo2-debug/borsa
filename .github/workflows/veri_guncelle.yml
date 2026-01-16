@@ -1,0 +1,32 @@
+name: Borsa Verisi Güncelleme
+
+# Ne zaman çalışacak?
+on:
+  schedule:
+    # Pazartesi'den Cuma'ya kadar, her saat başı çalış (Türkiye saati ile -3 saat farkını gözetin)
+    # Örnek: '0 7-15 * * 1-5' (Hafta içi sabah 7 ile akşam 3 arası her saat başı)
+    - cron: '0 7-15 * * 1-5' 
+  workflow_dispatch: # Elle tetiklemek istersen diye buton ekler
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Kodu Çek
+        uses: actions/checkout@v3
+
+      - name: Python Kurulumu
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Kütüphaneleri Yükle
+        run: |
+          pip install -r requirements.txt
+
+      - name: Botu Çalıştır
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python main.py
