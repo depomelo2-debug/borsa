@@ -1,6 +1,7 @@
 import os
 import time
 import borsapy as bp
+import concurrent.futures
 from supabase import create_client, Client
 from dotenv import load_dotenv
 from datetime import datetime, timezone
@@ -16,129 +17,156 @@ if not url or not key:
 
 supabase: Client = create_client(url, key)
 
-def veri_gonder(sembol, fiyat, kategori, grafik_kaydet=False):
-    zaman = datetime.now(timezone.utc).isoformat()
-    
+# --- AYARLAR ---
+MAX_WORKERS = 15  # Hız için 15 paralel robot
+BATCH_SIZE = 50   # Veritabanına 50'şer 50'şer paketle
+
+def hisse_verisi_getir(kod):
+    """
+    Tek bir hissenin Fiyat, Değişim ve Hacim verisini çeker.
+    """
     try:
-        # 1. CANLI TABLOYU GÜNCELLE (Hepsini kaydet)
-        data_live = {
-            "symbol": sembol,
-            "price": float(fiyat),
-            "category": kategori,
-            "last_updated": zaman
-        }
-        supabase.table("live_market").upsert(data_live).execute()
-        
-        # 2. GEÇMİŞ TABLOSUNA EKLE (Sadece seçilenleri kaydet - Kota dostu)
-        if grafik_kaydet:
-            data_history = {
-                "symbol": sembol,
-                "price": float(fiyat),
-                "created_at": zaman
+        hisse = bp.Ticker(kod)
+        if hisse.info and "last" in hisse.info:
+            fiyat = hisse.info["last"]
+            degisim = hisse.info.get("percentage_change")
+            hacim = hisse.info.get("volume")
+
+            # Veri temizliği (None gelirse 0 yap)
+            f_fiyat = float(fiyat) if fiyat else 0.0
+            f_degisim = float(degisim) if degisim else 0.0
+            f_hacim = float(hacim) if hacim else 0.0
+
+            return {
+                "symbol": kod,
+                "price": f_fiyat,
+                "change_rate": f_degisim, # Yüzdelik değişim
+                "volume": f_hacim,        # Hacim
+                "category": "hisse",
+                "last_updated": datetime.now(timezone.utc).isoformat()
             }
-            supabase.table("price_history").insert(data_history).execute()
-            print(f"✅ {sembol}: {fiyat} TL -> Güncellendi (+Grafik)")
-        else:
-            print(f"✅ {sembol}: {fiyat} TL -> Güncellendi (Sadece Fiyat)")
-            
+    except:
+        return None
+    return None
+
+def veri_gonder_toplu(veri_listesi, tablo="live_market"):
+    """Verileri paket halinde veritabanına yazar"""
+    if not veri_listesi: return
+    try:
+        supabase.table(tablo).upsert(veri_listesi).execute()
+        print(f"📡 {len(veri_listesi)} adet veri {tablo} tablosuna işlendi.")
     except Exception as e:
-        print(f"⚠️ {sembol} DB hatası: {e}")
+        print(f"⚠️ Yazma hatası: {e}")
 
 def main():
-    print("🚀 DEV Veri akışı başlıyor...")
+    print("🚀 KOMBO MOD: Tam Kapsamlı Veri Akışı Başlıyor...")
     
-    # --- 1. BÜTÜN HİSSELERİ BUL (Otomatik Liste) ---
-    print("📋 Borsa İstanbul şirket listesi çekiliyor...")
+    # ---------------------------------------------------------
+    # 1. HİSSE SENETLERİ (PARALEL İŞLEM)
+    # ---------------------------------------------------------
+    hisse_listesi = []
     try:
-        # borsapy'den tüm şirketleri çekiyoruz
+        # Otomatik tüm listeyi çekmeyi dene
         tum_sirketler = bp.companies()
-        
-        # Sadece BIST 100 (Popüler) hisselerinin grafiğini tutalım, diğerlerinin sadece fiyatını.
-        # Not: BIST 100 listesini dinamik almak uzun sürerse diye, en popülerleri elle işaretleyebiliriz
-        # veya basitçe tüm hisseleri tararız. Şimdilik hepsini tarayalım:
-        
-        sembol_listesi = tum_sirketler.index.tolist() if hasattr(tum_sirketler, 'index') else []
-        
-        # Eğer liste boş gelirse (hata olursa) yedek liste devreye girsin
-        if not sembol_listesi:
-            print("⚠️ Liste otomatik çekilemedi, yedek liste kullanılıyor.")
-            sembol_listesi = ["THYAO", "GARAN", "ASELS", "SISE", "KCHOL", "AKBNK", "EREGL", "TUPRS"]
-        
-        print(f"📊 Toplam {len(sembol_listesi)} hisse tarancak.")
-        
-        for i, kod in enumerate(sembol_listesi):
-            try:
-                # Çok yüklenmemek için her 50 hissede bir 2 saniye mola
-                if i % 50 == 0 and i > 0:
-                    print("☕ Kahve molası (Sunucuyu yormamak için 2sn bekle)...")
-                    time.sleep(2)
-                
-                hisse = bp.Ticker(kod)
-                # Veriyi güvenli çek
-                if hisse.info and "last" in hisse.info:
-                    fiyat = hisse.info["last"]
-                    
-                    # ÖNEMLİ: Grafik kaydını hepsine yaparsak veritabanı şişer.
-                    # Sadece popüler olanlara veya belirli bir listeye grafik izni verelim.
-                    # Şimdilik örnek olarak hepsine 'False' diyoruz, sadece CANLI fiyatı güncelliyoruz.
-                    # İstersen önemli hisseler için True yapabilirsin.
-                    grafik_varmi = False 
-                    
-                    # Örnek: Sadece BIST 30 hisselerine grafik açmak istersen:
-                    bist30_ornek = ["THYAO", "GARAN", "ASELS", "AKBNK", "EREGL", "TUPRS", "BIMAS"]
-                    if kod in bist30_ornek:
-                        grafik_varmi = True
-                        
-                    veri_gonder(kod, fiyat, "hisse", grafik_kaydet=grafik_varmi)
-                    
-                    # Her işlemden sonra sunucuya nefes aldır (0.2 saniye)
-                    time.sleep(0.2)
-            except Exception as e:
-                print(f"❌ {kod} pas geçildi.")
-
-    except Exception as e:
-        print(f"❌ Şirket listesi hatası: {e}")
-
-    # --- 2. POPÜLER FONLAR (Otomatik Tarama) ---
-    print("📈 Popüler Fonlar taranıyor...")
-    try:
-        # Son 1 ayda en çok kazandıran ilk 20 fonu bulup ekleyelim
-        # screen_funds bize bir DataFrame döner
-        populer_fonlar = bp.screen_funds(min_return_1m=1) # %1 üzeri getirenler
-        
-        # İlk 20 tanesini alalım
-        if not populer_fonlar.empty:
-            top_fonlar = populer_fonlar.head(20).index.tolist() # Fon kodlarını al
-            
-            for kod in top_fonlar:
-                try:
-                    fon = bp.Fund(kod)
-                    fiyat = fon.info.get("last_price") or fon.info.get("price")
-                    if fiyat:
-                        veri_gonder(kod, fiyat, "fon", grafik_kaydet=True) # Fonların grafiği olsun
-                        time.sleep(0.2)
-                except:
-                    pass
-    except Exception as e:
-        print(f"❌ Fon tarama hatası: {e}")
-
-    # --- 3. DÖVİZ & ALTIN ---
-    print("💰 Dövizler...")
-    dovizler = ["USD", "EUR", "GBP"]
-    for d in dovizler:
-        try:
-            kur = bp.FX(d)
-            val = kur.current["last"] if isinstance(kur.current, dict) else kur.current
-            veri_gonder(d, val, "doviz", grafik_kaydet=True)
-        except:
-            pass
-            
-    try:
-        altin = bp.FX("gram-altin")
-        val = altin.current["last"] if isinstance(altin.current, dict) else altin.current
-        veri_gonder("GRAM-ALTIN", val, "altin", grafik_kaydet=True)
+        if hasattr(tum_sirketler, 'index'):
+            hisse_listesi = tum_sirketler.index.tolist()
     except:
         pass
+
+    # Otomatik liste boşsa veya hata verdiyse DEV YEDEK LİSTE'yi kullan
+    if len(hisse_listesi) < 10:
+        print("⚠️ Otomatik liste alınamadı, Manuel Dev Liste devreye giriyor.")
+        hisse_listesi = [
+            "THYAO", "GARAN", "ASELS", "SISE", "KCHOL", "AKBNK", "EREGL", "TUPRS", "FROTO", "BIMAS",
+            "SASA", "HEKTS", "PETKM", "ISCTR", "YKBNK", "SAHOL", "ENKAI", "TCELL", "TTKOM", "KRDMD",
+            "KOZAL", "ODAS", "ZOREN", "ASTOR", "EUPWR", "KONTR", "GESAN", "REEDR", "MIATK", "ALFAS",
+            "CANTE", "PENTA", "QUAGR", "SMRTG", "GUBRF", "EKGYO", "VESTL", "ARCLK", "TOASO", "AEFES",
+            "AGHOL", "AHGAZ", "AKFGY", "AKGRT", "AKSA", "AKSEN", "ALARK", "ALBRK", "ALGYO", "ALKIM",
+            "AYDEM", "BAGFS", "BERA", "BIOEN", "BOBET", "BRSAN", "BRYAT", "BUCIM", "CEMTS", "CIMSA",
+            "CWENE", "DOHOL", "ECILC", "EGEEN", "ENJSA", "GENIL", "GLYHO", "GOZDE", "GWIND", "HALKB",
+            "IHLAS", "IPEKE", "ISDMR", "ISGYO", "ISMEN", "IZMDC", "KARSN", "KAYSE", "KCAER", "KMPUR",
+            "KONYA", "KORDS", "KOZAA", "MTRKS", "MAVI", "MGROS", "NTHOL", "OYAKC", "PGSUS", "PSGYO",
+            "SAKLA", "SDTTR", "SELEC", "SKBNK", "SNGYO", "SOKM", "TATGD", "TAVHL", "TKFEN", "TMSN",
+            "TSKB", "TURSG", "ULKER", "VAKBN", "VESBE", "YEOTK", "YYLGD"
+        ]
+
+    print(f"📊 {len(hisse_listesi)} Hisse taranıyor...")
+    
+    toplanacak_veriler = []
+    # ThreadPoolExecutor: Aynı anda 15 hisseyi tarar
+    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        sonuclar = executor.map(hisse_verisi_getir, hisse_listesi)
+        
+        for veri in sonuclar:
+            if veri:
+                toplanacak_veriler.append(veri)
+                if len(toplanacak_veriler) >= BATCH_SIZE:
+                    veri_gonder_toplu(toplanacak_veriler)
+                    toplanacak_veriler = []
+
+    if toplanacak_veriler:
+        veri_gonder_toplu(toplanacak_veriler)
+
+    # ---------------------------------------------------------
+    # 2. FONLAR (TOPTAN ÇEKİM - BULK)
+    # ---------------------------------------------------------
+    print("📈 Tüm Fonlar taranıyor...")
+    try:
+        fon_tablosu = bp.screen_funds()
+        fon_verileri = []
+        if not fon_tablosu.empty:
+            for kod, satir in fon_tablosu.iterrows():
+                try:
+                    fiyat = satir.get("price")
+                    if fiyat:
+                        fon_verileri.append({
+                            "symbol": kod,
+                            "price": float(fiyat),
+                            "category": "fon",
+                            "last_updated": datetime.now(timezone.utc).isoformat(),
+                            "change_rate": 0, # Fonlarda anlık değişim verisi genelde olmaz
+                            "volume": 0
+                        })
+                except: continue
+        
+        # 100'erli paketler halinde gönder
+        for i in range(0, len(fon_verileri), 100):
+            veri_gonder_toplu(fon_verileri[i:i+100])
+            
+    except Exception as e:
+        print(f"❌ Fon hatası: {e}")
+
+    # ---------------------------------------------------------
+    # 3. DÖVİZ & ALTIN
+    # ---------------------------------------------------------
+    print("💰 Döviz ve Altın taranıyor...")
+    try:
+        doviz_listesi = []
+        zaman = datetime.now(timezone.utc).isoformat()
+        for kur in ["USD", "EUR", "GBP", "GRAM-ALTIN"]:
+            veri = bp.FX(kur.lower())
+            val = veri.current["last"] if isinstance(veri.current, dict) else veri.current
+            
+            doviz_listesi.append({
+                "symbol": kur,
+                "price": float(val),
+                "category": "doviz" if "ALTIN" not in kur else "altin",
+                "last_updated": zaman,
+                "change_rate": 0,
+                "volume": 0
+            })
+            
+            # Grafikleri de kaydedelim (Sadece bunlar için)
+            supabase.table("price_history").insert({
+                 "symbol": kur, "price": float(val), "created_at": zaman
+            }).execute()
+        
+        veri_gonder_toplu(doviz_listesi)
+        
+    except Exception as e:
+        print(f"❌ Döviz hatası: {e}")
+
+    print("🏁 TÜM İŞLEMLER BAŞARIYLA TAMAMLANDI!")
 
 if __name__ == "__main__":
     main()
