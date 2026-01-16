@@ -16,20 +16,19 @@ if not url or not key:
 supabase: Client = create_client(url, key)
 
 def veri_gonder(sembol, fiyat, kategori):
-    # Datetime uyarısını düzelttik: timezone.utc kullanıyoruz
     zaman = datetime.now(timezone.utc).isoformat()
     
     # 1. CANLI TABLOYU GÜNCELLE
     try:
         data_live = {
             "symbol": sembol,
-            "price": float(fiyat), # Sayıya çevirmeyi garantiye alalım
+            "price": float(fiyat),
             "category": kategori,
             "last_updated": zaman
         }
         supabase.table("live_market").upsert(data_live).execute()
         
-        # 2. GEÇMİŞ TABLOSUNA EKLE
+        # 2. GEÇMİŞ TABLOSUNA EKLE (Grafik için)
         data_history = {
             "symbol": sembol,
             "price": float(fiyat),
@@ -45,27 +44,46 @@ def veri_gonder(sembol, fiyat, kategori):
 def main():
     print("🚀 Veri akışı başlıyor...")
     
-    # --- HİSSELER ---
-    # Listeyi şimdilik kısa tutalım, çalışırsa artırırız
-    hisseler = ["THYAO", "GARAN", "ASELS", "SISE"] 
+    # --- 1. HİSSE SENETLERİ ---
+    hisseler = ["THYAO", "GARAN", "ASELS", "SISE", "KCHOL"] 
+    print(f"📊 {len(hisseler)} Hisse taranıyor...")
     
-    print("📊 Hisseler taranıyor...")
     for kod in hisseler:
         try:
-            # Doğrudan test dosyasındaki gibi basit çekiyoruz
             hisse = bp.Ticker(kod)
-            # Veriyi zorla çekip ekrana yazdıralım ki ne geldiğini görelim
-            raw_info = hisse.info 
-            
-            # Fiyatı almayı dene
-            fiyat = raw_info["last"]
-            veri_gonder(kod, fiyat, "hisse")
-            
+            # info'dan son fiyatı alıyoruz
+            if hisse.info and "last" in hisse.info:
+                fiyat = hisse.info["last"]
+                veri_gonder(kod, fiyat, "hisse")
+            else:
+                 print(f"❌ {kod} fiyatı bulunamadı.")
         except Exception as e:
-            # Sessiz kalma, hatayı bağır!
-            print(f"❌ {kod} verisi çekilemedi! Sebep: {e}")
+            print(f"❌ {kod} hatası: {e}")
 
-    # --- DÖVİZ & ALTIN ---
+    # --- 2. YATIRIM FONLARI (TEFAS) ---
+    # İsteğin fon kodlarını buraya ekleyebilirsin
+    fonlar = ["TTE", "AFT", "MAC", "YAS"] 
+    print(f"📈 {len(fonlar)} Fon taranıyor...")
+
+    for kod in fonlar:
+        try:
+            fon = bp.Fund(kod)
+            # Fonlarda fiyat genellikle 'last_price' veya 'price' olarak döner
+            # Garanti olsun diye info içindeki olası fiyat alanlarını kontrol edelim
+            fiyat = None
+            if fon.info:
+                # TEFAS verisinde fiyat genelde bu alanlarda olur
+                fiyat = fon.info.get("last_price") or fon.info.get("price")
+            
+            if fiyat:
+                veri_gonder(kod, fiyat, "fon")
+            else:
+                print(f"❌ {kod} fon fiyatı çekilemedi.")
+                
+        except Exception as e:
+             print(f"❌ {kod} fon hatası: {e}")
+
+    # --- 3. DÖVİZ & ALTIN ---
     print("💰 Dövizler taranıyor...")
     try:
         # Dolar
